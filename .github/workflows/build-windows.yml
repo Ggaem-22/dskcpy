@@ -8,24 +8,37 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout source
+      # ------------------------------------------------------------
+      # SOURCE
+      # ------------------------------------------------------------
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-
-      - name: Setup Java 17
+      # ------------------------------------------------------------
+      # JAVA 17
+      # dskcpy necesita JDK 17+ para compilar el companion Android
+      # ------------------------------------------------------------
+      - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
+      # ------------------------------------------------------------
+      # NODE.JS
+      # ------------------------------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      # ------------------------------------------------------------
+      # PYTHON / MESON / NINJA
+      # ------------------------------------------------------------
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
 
       - name: Install Meson and Ninja
         shell: pwsh
@@ -33,6 +46,49 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install meson ninja
 
+      # ------------------------------------------------------------
+      # ANDROID SDK
+      #
+      # IMPORTANTE:
+      # NO pedimos "tools".
+      # setup-android instala solamente platform-tools.
+      # Después instalamos exactamente lo que pide dskcpy:
+      #
+      #   platforms;android-36
+      #   build-tools;36.0.0
+      # ------------------------------------------------------------
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ""
+
+      - name: Install Android SDK 36
+        shell: pwsh
+        run: |
+          sdkmanager --install `
+            "platform-tools" `
+            "platforms;android-36" `
+            "build-tools;36.0.0"
+
+      - name: Verify Android SDK
+        shell: pwsh
+        run: |
+          Write-Host "ANDROID_HOME = $env:ANDROID_HOME"
+          Write-Host "ANDROID_SDK_ROOT = $env:ANDROID_SDK_ROOT"
+
+          sdkmanager --list_installed
+
+          if (-not (Test-Path "$env:ANDROID_SDK_ROOT\platforms\android-36")) {
+            throw "Android SDK Platform 36 no fue instalado."
+          }
+
+          if (-not (Test-Path "$env:ANDROID_SDK_ROOT\build-tools\36.0.0")) {
+            throw "Android Build Tools 36.0.0 no fueron instalados."
+          }
+
+      # ------------------------------------------------------------
+      # MSYS2
+      # ------------------------------------------------------------
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
         with:
@@ -41,62 +97,132 @@ jobs:
           install: >-
             git
             make
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-pkgconf
             mingw-w64-x86_64-SDL2
             mingw-w64-x86_64-SDL2_image
             mingw-w64-x86_64-libusb
             mingw-w64-x86_64-ffmpeg
             mingw-w64-x86_64-zlib
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-toolchain
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        shell: pwsh
-        run: |
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
-
+      # ------------------------------------------------------------
+      # ANDROID COMPANION
+      #
+      # El README de dskcpy indica:
+      #
+      #   ./gradlew :server:assembleDebug
+      #
+      # Esto genera reverse-display.apk.
+      # ------------------------------------------------------------
       - name: Build Android companion
         shell: pwsh
         run: |
-          .\gradlew.bat :server:assembleDebug
+          .\gradlew.bat --no-daemon :server:assembleDebug
 
-      - name: Build native Windows host
+      # ------------------------------------------------------------
+      # BUILD WINDOWS
+      #
+      # El README indica que el build debe hacerse desde
+      # MSYS2 MinGW64.
+      # ------------------------------------------------------------
+      - name: Build Windows host
         shell: msys2 {0}
         run: |
           export PATH="/mingw64/bin:/usr/bin:$PATH"
-          meson setup x-reverse --buildtype=release
+
+          meson setup x-reverse \
+            --buildtype=release
+
           meson compile -C x-reverse
+
+      # ------------------------------------------------------------
+      # VERIFICAR ARCHIVOS GENERADOS
+      # ------------------------------------------------------------
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          Write-Host "=== scrcpy.exe ==="
+          Get-ChildItem -Recurse -Filter scrcpy.exe
+
+          Write-Host ""
+          Write-Host "=== scrcpy-server ==="
+          Get-ChildItem -Recurse -Filter scrcpy-server
+
+          Write-Host ""
+          Write-Host "=== reverse-display.apk ==="
+          Get-ChildItem -Recurse -Filter reverse-display.apk
+
+      # ------------------------------------------------------------
+      # DASHBOARD
+      # ------------------------------------------------------------
+      - name: Install dashboard dependencies
+        shell: pwsh
+        run: |
+          npm.cmd ci --prefix gui
 
       - name: Build dashboard
         shell: pwsh
         run: |
-          npm.cmd ci --prefix gui
           npm.cmd run build --prefix gui
 
-      - name: Prepare portable package
+      # ------------------------------------------------------------
+      # PREPARAR ZIP
+      # ------------------------------------------------------------
+      - name: Prepare package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path package
+          New-Item -ItemType Directory -Force -Path package | Out-Null
 
-          Copy-Item x-reverse/app/scrcpy.exe package/
-          Copy-Item x-reverse/server/scrcpy-server package/
-          Copy-Item x-reverse/server/reverse-display.apk package/
+          $scrcpy = Get-ChildItem -Recurse -Filter scrcpy.exe |
+            Select-Object -First 1
 
-          if (Test-Path gui/dist) {
-              Copy-Item gui/dist package/gui -Recurse
+          $server = Get-ChildItem -Recurse -Filter scrcpy-server |
+            Select-Object -First 1
+
+          $apk = Get-ChildItem -Recurse -Filter reverse-display.apk |
+            Select-Object -First 1
+
+          if (-not $scrcpy) {
+            throw "No se encontró scrcpy.exe"
           }
 
-          if (Test-Path start-dskcpy.cmd) {
-              Copy-Item start-dskcpy.cmd package/
+          if (-not $server) {
+            throw "No se encontró scrcpy-server"
           }
 
-          Compress-Archive -Path package/* -DestinationPath dskcpy-windows.zip -Force
+          if (-not $apk) {
+            throw "No se encontró reverse-display.apk"
+          }
 
-      - name: Upload dskcpy package
+          Copy-Item $scrcpy.FullName package\scrcpy.exe
+          Copy-Item $server.FullName package\scrcpy-server
+          Copy-Item $apk.FullName package\reverse-display.apk
+
+          if (Test-Path gui\dist) {
+            Copy-Item gui\dist package\gui -Recurse
+          }
+
+          Write-Host ""
+          Write-Host "=== PACKAGE ==="
+          Get-ChildItem package -Recurse
+
+      # ------------------------------------------------------------
+      # ZIP FINAL
+      # ------------------------------------------------------------
+      - name: Create ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path package\* `
+            -DestinationPath dskcpy-windows.zip `
+            -Force
+
+          Get-Item dskcpy-windows.zip
+
+      # ------------------------------------------------------------
+      # ARTIFACT
+      # ------------------------------------------------------------
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: dskcpy-windows
