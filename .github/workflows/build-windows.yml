@@ -60,8 +60,7 @@ jobs:
             mingw-w64-x86_64-pkgconf
             mingw-w64-x86_64-meson
             mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-SDL2
-            mingw-w64-x86_64-SDL2_image
+            mingw-w64-x86_64-sdl3
             mingw-w64-x86_64-libusb
             mingw-w64-x86_64-ffmpeg
             mingw-w64-x86_64-zlib
