@@ -1,1 +1,49 @@
+name: Compilar dskcpy
 
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Copiar repositorio
+      uses: actions/checkout@v4
+
+    - name: Instalar herramientas de compilación esenciales
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake
+
+    - name: Compilar el proyecto
+      run: |
+        echo "Revisando el contenido del repositorio..."
+        ls -la
+        
+        # Si existe un Makefile o CMakeLists.txt, compila acorde a eso; si es un archivo .c suelto, compila directo.
+        if [ -f "CMakeLists.txt" ]; then
+          mkdir build && cd build
+          cmake ..
+          make
+        elif [ -f "Makefile" ] || [ -f "makefile" ]; then
+          make
+        else
+          # Intento genérico buscando archivos fuente en C
+          gcc *.c -o dskcpy || cc *.c -o dskcpy
+        fi
+
+    - name: Verificar archivo compilado
+      run: |
+        echo "Buscando el ejecutable generado..."
+        find . -maxdepth 2 -type f -executable
+        
+    - name: Subir el binario compilado como artefacto
+      uses: actions/upload-artifact@v4
+      with:
+        name: dskcpy-ejecutable
+        path: |
+          dskcpy
+          **/dskcpy
