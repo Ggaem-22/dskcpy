@@ -13,37 +13,25 @@ jobs:
     - name: Copiar repositorio
       uses: actions/checkout@v4
 
-    - name: Instalar herramientas de compilación esenciales
+    - name: Instalar dependencias y herramientas de compilación
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential cmake
+        sudo apt-get install -y build-essential meson ninja-build
 
-    - name: Compilar el proyecto
+    - name: Configurar y compilar con Meson
       run: |
-        echo "Revisando el contenido del repositorio..."
-        ls -la
-        
-        # Si existe un Makefile o CMakeLists.txt, compila acorde a eso; si es un archivo .c suelto, compila directo.
-        if [ -f "CMakeLists.txt" ]; then
-          mkdir build && cd build
-          cmake ..
-          make
-        elif [ -f "Makefile" ] || [ -f "makefile" ]; then
-          make
-        else
-          # Intento genérico buscando archivos fuente en C
-          gcc *.c -o dskcpy || cc *.c -o dskcpy
-        fi
+        meson setup builddir
+        meson compile -C builddir
 
-    - name: Verificar archivo compilado
+    - name: Buscar el ejecutable generado
       run: |
-        echo "Buscando el ejecutable generado..."
-        find . -maxdepth 2 -type f -executable
-        
+        echo "Buscando archivos ejecutables en el directorio de compilación:"
+        find builddir -type f -executable
+
     - name: Subir el binario compilado como artefacto
       uses: actions/upload-artifact@v4
       with:
         name: dskcpy-ejecutable
         path: |
-          dskcpy
-          **/dskcpy
+          builddir/dskcpy
+          builddir/**/dskcpy
