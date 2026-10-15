@@ -1,1 +1,103 @@
+name: Build dskcpy Windows
 
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Meson and Ninja
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install meson ninja
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-SDL2
+            mingw-w64-x86_64-SDL2_image
+            mingw-w64-x86_64-libusb
+            mingw-w64-x86_64-ffmpeg
+            mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-toolchain
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        shell: pwsh
+        run: |
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Build Android companion
+        shell: pwsh
+        run: |
+          .\gradlew.bat :server:assembleDebug
+
+      - name: Build native Windows host
+        shell: msys2 {0}
+        run: |
+          export PATH="/mingw64/bin:/usr/bin:$PATH"
+          meson setup x-reverse --buildtype=release
+          meson compile -C x-reverse
+
+      - name: Build dashboard
+        shell: pwsh
+        run: |
+          npm.cmd ci --prefix gui
+          npm.cmd run build --prefix gui
+
+      - name: Prepare portable package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package
+
+          Copy-Item x-reverse/app/scrcpy.exe package/
+          Copy-Item x-reverse/server/scrcpy-server package/
+          Copy-Item x-reverse/server/reverse-display.apk package/
+
+          if (Test-Path gui/dist) {
+              Copy-Item gui/dist package/gui -Recurse
+          }
+
+          if (Test-Path start-dskcpy.cmd) {
+              Copy-Item start-dskcpy.cmd package/
+          }
+
+          Compress-Archive -Path package/* -DestinationPath dskcpy-windows.zip -Force
+
+      - name: Upload dskcpy package
+        uses: actions/upload-artifact@v4
+        with:
+          name: dskcpy-windows
+          path: dskcpy-windows.zip
